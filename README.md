@@ -33,9 +33,11 @@ Just a note, it will prompt you to install Java.
 Step 3: Run the Deployment validation script
 --------------------------------------------
 
-Create a folder in your pc and copy AssessmentTool.py, networkAssessmentComponents.py and switches.txt file.
+Create a folder in your pc and copy AssessmentTool.py and networkAssessmentComponents.py scripts.
 
-Add the IP addresses (eAPI enabled) of all the Arista switches in the network. Remove the existing IP address we have in the file.
+Create a text file called switches.txt in the same folder.
+
+Add the IP addresses (eAPI enabled) of all the Arista switches in the network. 
 
 Run the AssessmentTool.py Python script. It will prompt you for the switch username and password of the Arista switches.  
 
