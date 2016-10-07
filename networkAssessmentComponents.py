@@ -34,85 +34,115 @@
 
 import networkx as nx
 import pyeapi
+import re
 
 
-class Commands:
+class Commands(object):
 
-    def __init__( self, switch, username, password ):
-        self.switch = switch
-        self.node = pyeapi.connect(transport="https", host=switch, username=username, password=password, port=None)
+    """
+        Commands Library used by all the Use Cases (BGP & MLAG)
+    """
 
-    def getlldpinfo( self ):
+    def __init__(self, switch, username, password):
+        self.node = pyeapi.connect(transport="https",
+                                   host=switch,
+                                   username=username,
+                                   password=password,
+                                   port=None)
+
+    def getlldpinfo(self):
         eos_command = "show lldp neighbors"
         response = self.node.execute([eos_command])
         neighbors = response["result"][0]["lldpNeighbors"]
         return neighbors
 
-    def getspeed( self, interface_name ):
+    def getspeed(self, interface_name):
         eos_command = "show interfaces status"
         response = self.node.execute([eos_command])
-        speed = response["result"][0]["interfaceStatuses"][interface_name]["bandwidth"]
+        speed = (response["result"][0]["interfaceStatuses"]
+                         [interface_name]["bandwidth"])
         return (speed/1000000000)
 
-    def hostname( self ):
+    def hostname(self):
         eos_command = "show hostname"
         response = self.node.execute([eos_command])
         host_name = str(response["result"][0]["fqdn"])
         return host_name
 
-    def runningconfig( self ):
+    def runningconfig(self):
         eos_command = ["enable", "show running-config"]
         response = self.node.execute(eos_command)
         running_config = response["result"][1]["cmds"]
         return running_config
 
-    def bgpsummary( self ):
-       eos_command = "show ip bgp summary vrf all"
-       response = self.node.execute([eos_command])
-       bgp_summary = response["result"][0]["vrfs"]
-       return bgp_summary
+    def bgpsummary(self):
+        eos_command = "show ip bgp summary vrf all"
+        response = self.node.execute([eos_command])
+        bgp_summary = response["result"][0]["vrfs"]
+        return bgp_summary
 
-    def mlag( self ):
-       eos_command = "show mlag"
-       response = self.node.execute([eos_command])
-       sh_mlag = response["result"][0]
-       return sh_mlag
+    def mlag(self):
+        eos_command = "show mlag"
+        response = self.node.execute([eos_command])
+        sh_mlag = response["result"][0]
+        return sh_mlag
 
-class eapi_access:
 
-    def __init__( self, devices, username, password, errors=None ):
+class DefineEapiVariables(object):
+
+    """
+        Parent Class for all the Use Cases (BGP & MLAG)
+    """
+    def __init__(self, devices, username, password):
         self.devices = devices
         self.username = username
         self.password = password
         self.hostnames = {}
         self.errors = {}
 
-    def validate_switches( self ):
 
+class EapiAccess(DefineEapiVariables):
+
+    def validate_switches(self):
+        """
+        This MUST be the first method used by tools script
+        This verifies the eAPI connectivity to all the switches
+            listed in the switches.txt file
+        Save the IP address of the switches reachable by eAPI in hostnames
+            dictionary
+        Save the IP address of the switches not reachable in errors
+            dictionary
+
+        ALl the other use cases (BGP and MLAG) uses the IP addresses
+            that are reachable
+        """
         for switch in self.devices:
             try:
-                eos_commands = Commands( switch, self.username, self.password )
+                eos_commands = Commands(switch, self.username, self.password)
                 self.hostnames[switch] = eos_commands.hostname()
 
             except pyeapi.eapilib.ConnectionError:
-                self.errors[switch] = "ConnectionError: unable to connect to eAPI"
+                self.errors[switch] = "ConnectionError: unable to connect " \
+                                        "to eAPI"
 
             except pyeapi.eapilib.CommandError:
-                self.errors[switch] = "CommandError: Check your EOS command syntax"
+                self.errors[switch] = "CommandError: Check your EOS command " \
+                                        "syntax"
+
+    def get_hostnames(self):
+        return self.hostnames
+
+    def get_errors(self):
+        return self.errors
 
 
-class Plotter:
+class Plotter(DefineEapiVariables):
 
-    def __init__( self, devices, username, password, errors=None ):
-        self.devices = devices
-        self.username = username
-        self.password = password
-        self.errors = {}
-
-    def draw( self ):
-
-        ### Draw Network Topology
-
+    def draw(self):
+        """
+        networkx script examples
+        https://www.udacity.com/wiki/creating-network-graphs-with-python
+        """
         # Define Graph
 
         G = nx.MultiGraph()
@@ -121,65 +151,70 @@ class Plotter:
 
         for switch in self.devices:
             try:
-                eos_commands = Commands( switch, self.username, self.password )
+                eos_commands = Commands(switch, self.username, self.password)
                 lldpinfo = eos_commands.getlldpinfo()
                 for neighbor in lldpinfo:
-                    print "Scanning details for neighbor %s" %(neighbor["neighborDevice"])
+                    print "Scanning details for neighbor %s" \
+                            % (neighbor["neighborDevice"])
                     localport = neighbor["port"]
                     remoteport = neighbor["neighborPort"]
-                    speedint = eos_commands.getspeed( localport )
+                    speedint = eos_commands.getspeed(localport)
 
-                    edge_key = neighbor["neighborDevice"]+"_" + self.devices[switch] + "_" + remoteport + localport
-                    # print "check_key is " + edge_key
+                    edge_key = (neighbor["neighborDevice"] +
+                                "_" +
+                                self.devices[switch] +
+                                "_" +
+                                remoteport +
+                                localport)
 
-                    if G.has_edge(neighbor["neighborDevice"], self.devices[switch], key = edge_key) == False:
-                        # print "\tAdding edge %s <-----------------------> %s with key %s\n" %(localport, remoteport, edge_key)
-                        G.add_edge(self.devices[switch], neighbor["neighborDevice"], port = localport, neighborPort = remoteport, speed = speedint, key = edge_key)
+                    if (G.has_edge(neighbor["neighborDevice"],
+                            self.devices[switch], key=edge_key) == False):
+                        G.add_edge(self.devices[switch],
+                                   neighbor["neighborDevice"],
+                                   port=localport,
+                                   neighborPort=remoteport,
+                                   speed=speedint,
+                                   key=edge_key)
 
             except pyeapi.eapilib.ConnectionError:
-                self.errors[switch] = "ConnectionError: unable to connect to eAPI"
+                self.errors[switch] = "ConnectionError: unable to connect" \
+                                        " to eAPI"
 
             except pyeapi.eapilib.CommandError:
-                self.errors[switch] = "CommandError: Check your EOS command syntax"
+                self.errors[switch] = "CommandError: Check your EOS command" \
+                                        " syntax"
 
-        ### Create Network Graph
+        # Create Network Graph
 
         print "Creating the network diagram file network.graphml"
-        nx.write_graphml( G,'network.graphml' )
+        nx.write_graphml(G, 'network.graphml')
 
 
-class BgpValidate:
+class BgpValidate(DefineEapiVariables):
 
-    def __init__( self, devices, username, password, errors=None ):
-        self.devices = devices
-        self.username = username
-        self.password = password
-        self.errors = {}
+    def __init__(self, devices, username, password):
+        super(BgpValidate, self).__init__(devices, username, password)
         self.bgp_status = {}
 
-    def is_integer( self, octet ):
-        try:
-            int(octet)
-            return True
-
-        except ValueError:
-            return False
-
-    def is_ipv4_ipv6( self, neighbor_data ):
-        if len(neighbor_data.split(".")) == 4:
-            for each_octet in neighbor_data.split("."):
-                is_octer_integer = self.is_integer(each_octet)
-                if is_octer_integer == "False":
-                    return "None"
+    @staticmethod
+    def is_ipv4_ipv6(neighbor_data):
+        """
+        Verifies whether the address in neighbor/network statement is
+        an  IPv4 address.
+        Called by bgp_statement_parser method
+        """
+        pattern_ip = re.compile(r'((([0-9]){1,3})\.){3}([0-9]){1,3}')
+        is_ipv4 = pattern_ip.search(neighbor_data)
+        if bool(is_ipv4):
             return "ipv4"
         return "None"
 
-    def is_ipv4_ipv6_subnet( self, network_data ):
-        if len(network_data.split(".")) == 4:
-            return "ipv4"
-        return "ipv6"
-
-    def find_bgp_neighbors( self, bgp_data, each_statement, vrf ):
+    @staticmethod
+    def find_bgp_neighbors(bgp_data, each_statement, vrf):
+        """
+        Retrieves IP addresses from neighbor <x.y.z.w> statement
+        Called by bgp_statement_parser method
+        """
         if vrf not in bgp_data.keys():
             bgp_data[vrf] = {}
 
@@ -191,7 +226,12 @@ class BgpValidate:
 
         return bgp_data
 
-    def find_bgp_networks( self, bgp_data, each_statement, vrf ):
+    @staticmethod
+    def find_bgp_networks(bgp_data, each_statement, vrf):
+        """
+        Retrieves network address from the network <x.y.z.0/24> statement
+        Called by bgp_statement_parser method
+        """
         if vrf not in bgp_data.keys():
             bgp_data[vrf] = {}
 
@@ -203,20 +243,30 @@ class BgpValidate:
 
         return bgp_data
 
-    def bgp_statement_parser( self, bgp_config ):
-        bgp_data = { }
+    def bgp_statement_parser(self, bgp_config):
+        """
+        Retrieves BGP Neighbor IP addresses from the BGP configuration
+        Also retrieves Network addresses advertised using network statement
+        This method is called by bgp_validate method.
+        """
+        bgp_data = {}
         for each_statement in bgp_config:
             if not each_statement.find("neighbor"):
                 verify_ipv4_ipv6 = self.is_ipv4_ipv6(each_statement.split()[1])
                 if verify_ipv4_ipv6 == "ipv4":
                     vrf = "default"
-                    bgp_data = self.find_bgp_neighbors(bgp_data, each_statement, vrf)
+                    bgp_data = self.find_bgp_neighbors(bgp_data,
+                                                       each_statement, vrf)
 
             if not each_statement.find("network"):
-                verify_ipv4_ipv6_subnet = self.is_ipv4_ipv6_subnet(each_statement.split()[1])
+                verify_ipv4_ipv6_subnet = self.is_ipv4_ipv6(
+                    each_statement.split()[1]
+                    )
                 if verify_ipv4_ipv6_subnet == "ipv4":
                     vrf = "default"
-                    bgp_data = self.find_bgp_networks(bgp_data, each_statement, vrf)
+                    bgp_data = self.find_bgp_networks(
+                        bgp_data, each_statement, vrf
+                        )
 
             if not each_statement.find("address-family ipv4"):
                 bgp_per_af_config = bgp_config[each_statement]["cmds"]
@@ -224,7 +274,9 @@ class BgpValidate:
 
                 for each_statement_within_af in bgp_per_af_config:
                     if not each_statement_within_af.find("network"):
-                        bgp_data = self.find_bgp_networks(bgp_data, each_statement_within_af, vrf)
+                        bgp_data = self.find_bgp_networks(
+                            bgp_data, each_statement_within_af, vrf
+                            )
 
             if not each_statement.find("vrf"):
                 vrf = str(each_statement.split()[1])
@@ -232,27 +284,45 @@ class BgpValidate:
 
                 for each_statement_within_vrf in bgp_per_vrf_config:
                     if not each_statement_within_vrf.find("neighbor"):
-                        verify_ipv4_ipv6 = self.is_ipv4_ipv6(each_statement_within_vrf.split()[1])
+                        verify_ipv4_ipv6 = self.is_ipv4_ipv6(
+                            each_statement_within_vrf.split()[1]
+                            )
                         if verify_ipv4_ipv6 == "ipv4":
-                            bgp_data = self.find_bgp_neighbors(bgp_data, each_statement_within_vrf, vrf)
+                            bgp_data = self.find_bgp_neighbors(
+                                bgp_data, each_statement_within_vrf, vrf
+                                )
 
                     if not each_statement_within_vrf.find("network"):
-                        verify_ipv4_ipv6_subnet = self.is_ipv4_ipv6_subnet(each_statement_within_vrf.split()[1])
+                        verify_ipv4_ipv6_subnet = self.is_ipv4_ipv6(
+                            each_statement_within_vrf.split()[1]
+                            )
                         if verify_ipv4_ipv6_subnet == "ipv4":
-                            bgp_data = self.find_bgp_networks(bgp_data, each_statement_within_vrf, vrf)
+                            bgp_data = self.find_bgp_networks(
+                                bgp_data, each_statement_within_vrf, vrf
+                                )
 
-                    if not each_statement_within_vrf.find("address-family ipv4"):
-                        bgp_per_vrf_af_config = bgp_per_vrf_config[each_statement_within_vrf]["cmds"]
+                    if not each_statement_within_vrf.find(
+                            "address-family ipv4"):
+                        bgp_per_vrf_af_config = (bgp_per_vrf_config
+                                                 [each_statement_within_vrf]
+                                                 ["cmds"])
 
-                        for each_statement_within_vrf_af in bgp_per_vrf_af_config:
-                            if not each_statement_within_vrf_af.find("network"):
-                                bgp_data = self.find_bgp_networks(bgp_data, each_statement_within_vrf_af, vrf)
-
+                        for each_statement_within_vrf_af in \
+                                bgp_per_vrf_af_config:
+                            if (not each_statement_within_vrf_af.find
+                                    ("network")):
+                                bgp_data = self.find_bgp_networks(
+                                    bgp_data, each_statement_within_vrf_af, vrf
+                                    )
 
         return bgp_data
 
-
-    def bgp_config_exist( self, running_config ):
+    @staticmethod
+    def bgp_config_exist(running_config):
+        """
+        This method verifies whether BGP is configured
+        This method is called by bgp_validate method.
+        """
         bgp_config = ["None"]
         bgp_data = {}
         for each in running_config:
@@ -262,112 +332,169 @@ class BgpValidate:
 
         return bgp_config
 
-    def bgp_status_check( self, bgp_config, bgp_summary ):
-        # Verify Neighbor State
-        # For each VRF
+    @staticmethod
+    def bgp_status_check(bgp_config, bgp_summary):
+        """
+        Checks BGP State against configured BGP neighbors
+        This method is called by bgp_validate method.
+        """
         device_bgp_status = {}
         for each_vrf in bgp_config:
             device_bgp_status[each_vrf] = {}
             if each_vrf in bgp_summary:
                 for each_neighbor in bgp_config[each_vrf]["neighbors"]:
                     if each_neighbor in bgp_summary[each_vrf]["peers"]:
-                        bgp_peer_state = bgp_summary[each_vrf]["peers"][each_neighbor]["peerState"]
+                        bgp_peer_state = (bgp_summary[each_vrf]
+                                                     ["peers"]
+                                                     [each_neighbor]
+                                                     ["peerState"])
 
                         if bgp_peer_state != "Established":
-                            device_bgp_status[each_vrf][str(each_neighbor)] = str("Neighbor state is " + bgp_peer_state)
+                            device_bgp_status[each_vrf][str(each_neighbor)] = (
+                                str("Neighbor state is " + bgp_peer_state))
                     else:
-                        device_bgp_status[each_vrf][str(each_neighbor)] = "BGP is NOT operational for this neighbor"
+                        device_bgp_status[each_vrf][str(each_neighbor)] = (
+                            "BGP is NOT operational for this neighbor")
 
                 if not device_bgp_status[each_vrf]:
-                    device_bgp_status[each_vrf]["Status"] = "All the configured BGP peers are up in this VRF"
-                    device_bgp_status[each_vrf]["Configured Neighbors"] = bgp_config[each_vrf]["neighbors"]
+                    device_bgp_status[each_vrf]["Status"] = (
+                        "All the configured BGP peers are up in this VRF")
+                    device_bgp_status[each_vrf]["Configured Neighbors"] = (
+                        bgp_config[each_vrf]["neighbors"])
                 else:
-                    device_bgp_status[each_vrf]["Configured Neighbors"] = bgp_config[each_vrf]["neighbors"]
+                    device_bgp_status[each_vrf]["Configured Neighbors"] = (
+                        bgp_config[each_vrf]["neighbors"])
             else:
-                device_bgp_status[each_vrf]["Status"] = "There are no operational BGP neighbors in this VRF."
-                device_bgp_status[each_vrf]["Configured Neighbors"] = bgp_config[each_vrf]["neighbors"]
+                device_bgp_status[each_vrf]["Status"] = (
+                    "There are no operational BGP neighbors in this VRF.")
+                device_bgp_status[each_vrf]["Configured Neighbors"] = (
+                    bgp_config[each_vrf]["neighbors"])
 
         return device_bgp_status
 
+    def bgp_validate(self):
+        """
+        1. This is the method called from the Assessment Tool
+        2. This method collects the show run using Commands Class
+        3. Checks if BGP is configured using bgp_config_exist static method.
+        4. Retrieves BGP Configuration from the show run
+            using bgp_statement_parser method.
+        5. Collect show ip bgp summary using Commands Class
+        6. Checks BGP Adjacency using bgp_status_check static method.
+        7. Document BGP Adjacency state in the bgp_status dictionary
+        8. Document eAPI connectivity issues in errors dictionary
 
-    def bgp_validate( self ):
-
+        """
         for switch in self.devices:
             self.bgp_status[switch] = {}
             try:
-                eos_commands = Commands( switch, self.username, self.password )
+                eos_commands = Commands(switch, self.username, self.password)
 
-                # Execute the desired command
+                # Collect Show run
                 running_config = eos_commands.runningconfig()
+
+                # Verify BGP is configured
                 bgp_config = self.bgp_config_exist(running_config)
 
                 if "None" not in bgp_config:
+                    # If configured, retrieve BGP Neighbor IP addresses
                     get_bgp_config = self.bgp_statement_parser(bgp_config)
+
+                    # Collect show ip bgp summary
                     bgp_summary = eos_commands.bgpsummary()
-                    self.bgp_status[switch] = self.bgp_status_check(get_bgp_config, bgp_summary)
+
+                    # Validate BGP Adjacency
+                    self.bgp_status[switch] = self.bgp_status_check(
+                        get_bgp_config, bgp_summary)
 
                 else:
-                    self.bgp_status[switch] = "BGP is not configured on this switch."
+                    # If BGP configuration not found, document it
+                    self.bgp_status[switch] = (
+                        "BGP is not configured on this switch.")
 
             except pyeapi.eapilib.ConnectionError:
-                self.errors[switch] = "ConnectionError: unable to connect to eAPI"
+                self.errors[switch] = (
+                    "ConnectionError: unable to connect to eAPI")
 
             except pyeapi.eapilib.CommandError:
-                self.errors[switch] = "CommandError: Check your EOS command syntax"
+                self.errors[switch] = (
+                    "CommandError: Check your EOS command syntax")
 
             if not self.bgp_status[switch]:
+                """
+                If unable to connect to switch, delete entry for that switch
+                in the bgp_status dictionary
+                """
                 del self.bgp_status[switch]
 
+    def get_bgp_status(self):
+        return self.bgp_status
 
+    def get_errors(self):
+        return self.errors
 
-class MlagValidate:
+class MlagValidate(DefineEapiVariables):
 
-    def __init__( self, devices, username, password, errors=None ):
-        self.devices = devices
-        self.username = username
-        self.password = password
-        self.errors = {}
+    def __init__(self, devices, username, password):
+        super(MlagValidate, self).__init__(devices, username, password)
         self.mlag_status = {}
 
-    def mlag_status_check( self, show_mlag ):
+    @staticmethod
+    def mlag_status_check(show_mlag):
 
         device_mlag_status = {}
 
         # verify MLAG is configured
         mlag_configs = show_mlag.keys()
 
-        if "domainId" in  mlag_configs and "peerLink" in mlag_configs and "localInterface" in mlag_configs:
+        if ("domainId" in mlag_configs and
+                "peerLink" in mlag_configs and
+                "localInterface" in mlag_configs):
             if show_mlag["state"] == "active":
-                device_mlag_status["MLAG Control Plane"] = "MLAG Control Plane is active"
+                device_mlag_status["MLAG Control Plane"] = (
+                    "MLAG Control Plane is active")
                 if show_mlag["mlagPorts"]["Active-full"] != 0:
-                    device_mlag_status["MLAG Active-full Port Channels"] = str(show_mlag["mlagPorts"]["Active-full"])
+                    device_mlag_status["MLAG Active-full Port Channels"] = (
+                        str(show_mlag["mlagPorts"]["Active-full"]))
                 if show_mlag["mlagPorts"]["Inactive"] != 0:
-                    device_mlag_status["MLAG Inactive Port Channels"] = str(show_mlag["mlagPorts"]["Inactive"])
+                    device_mlag_status["MLAG Inactive Port Channels"] = (
+                        str(show_mlag["mlagPorts"]["Inactive"]))
                 if show_mlag["mlagPorts"]["Active-partial"] != 0:
-                    device_mlag_status["MLAG Active-partial Port Channels"] = str(show_mlag["mlagPorts"]["Active-partial"])
+                    device_mlag_status["MLAG Active-partial Port Channels"] = (
+                        str(show_mlag["mlagPorts"]["Active-partial"]))
             else:
-                device_mlag_status["MLAG Control Plane"] = "MLAG Control Plane is not Active. Its current state is " + str(show_mlag["state"])
+                device_mlag_status["MLAG Control Plane"] = (
+                    "MLAG Control Plane is not Active. Its current state is " +
+                    str(show_mlag["state"]))
         else:
             device_mlag_status = "MLAG is not configured in this switch"
 
         return device_mlag_status
 
-    def mlag_validate( self ):
+    def mlag_validate(self):
 
         for switch in self.devices:
             self.mlag_status[switch] = {}
             try:
-                eos_commands = Commands( switch, self.username, self.password )
+                eos_commands = Commands(switch, self.username, self.password)
 
                 # Execute the desired command
                 show_mlag = eos_commands.mlag()
                 self.mlag_status[switch] = self.mlag_status_check(show_mlag)
 
             except pyeapi.eapilib.ConnectionError:
-                self.errors[switch] = "ConnectionError: unable to connect to eAPI"
+                self.errors[switch] = (
+                    "ConnectionError: unable to connect to eAPI")
 
             except pyeapi.eapilib.CommandError:
-                self.errors[switch] = "CommandError: Check your EOS command syntax"
+                self.errors[switch] = (
+                    "CommandError: Check your EOS command syntax")
 
             if not self.mlag_status[switch]:
                 del self.mlag_status[switch]
+
+    def get_mlag_status(self):
+        return self.mlag_status
+
+    def get_errors(self):
+        return self.errors

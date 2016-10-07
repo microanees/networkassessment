@@ -34,7 +34,7 @@
 
 import getpass
 import pprint
-from networkAssessmentComponents import eapi_access, Plotter, BgpValidate, MlagValidate
+from networkAssessmentComponents import EapiAccess, Plotter, BgpValidate, MlagValidate
 
 # Read the list of switch IP addresses
 
@@ -62,7 +62,9 @@ my_report = """<!DOCTYPE html>
 <body>
 <h1>Post Deployment Network Validation Report</h1>
 <p>
-This report shows if the state of the BGP neighbor is not in the "Established" state. BGP neighbor state is verified against the configured BGP neighbors under each VRF. This report is generated only for ipv4 neighbors.
+This report shows if the state of the BGP neighbor is not in the "Established" state.
+BGP neighbor state is verified against the configured BGP neighbors under each VRF.
+This report is generated only for ipv4 neighbors.
 The report also shows the state of MLAG control plane and the port channels.
 </p>
 """
@@ -82,9 +84,9 @@ def write_report(my_report, result):
 
 print "Validating eAPI connectivity to the switches"
 
-device_eapi_access = eapi_access(switches, my_username, my_password)
+device_eapi_access = EapiAccess(switches, my_username, my_password)
 device_eapi_access.validate_switches()
-switches = device_eapi_access.hostnames
+switches = device_eapi_access.get_hostnames()
 
 # Draw Physical Topology
 
@@ -101,9 +103,9 @@ print "Working on BGP Assessment"
 bgp_assessment = BgpValidate(switches, my_username, my_password)
 bgp_assessment.bgp_validate()
 
-if bool(bgp_assessment.bgp_status):
-    pprint.pprint(bgp_assessment.bgp_status)
-    result = bgp_assessment.bgp_status
+if bool(bgp_assessment.get_bgp_status()):
+    pprint.pprint(bgp_assessment.get_bgp_status())
+    result = bgp_assessment.get_bgp_status()
     my_report += """ <h1>BGP Validation</h1>
     """
     for each_switch in result:
@@ -124,7 +126,7 @@ mlag_assessment.mlag_validate()
 
 if bool(mlag_assessment.mlag_status):
     pprint.pprint(mlag_assessment.mlag_status)
-    result = mlag_assessment.mlag_status
+    result = mlag_assessment.get_mlag_status()
     my_report += """ <h1>MLAG Validation</h1>
     """
     for each_switch in result:
@@ -137,7 +139,7 @@ if bool(mlag_assessment.mlag_status):
     print "MLAG Assessment Completed."
 
 
-# eAPI Connectivity Issues
+# Prepare to write a report
 
 if bool(device_eapi_access.errors) or bool(network_topology.errors) or bool(bgp_assessment.errors):
     my_report += """ <h1>eAPI Access Issues</h1>
